@@ -46,6 +46,18 @@ or
 ./elman --setup
 ```
 
+### Changing defaults
+
+The script creates a file under your home directory named `.elman.yml`. Change its contents to match your setup:
+
+```YAML
+---
+:elasticsearch:
+  :host: localhost
+  :port: '9200'
+  :search_results_size: 10
+```
+
 ## Usage
 
 ### Full text search
