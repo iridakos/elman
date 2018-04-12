@@ -27,8 +27,8 @@ require 'fileutils'
 require 'elasticsearch'
 require 'optparse'
 
-CONFIGURATION_FILE = File.expand_path('~/.manelast.yml')
-INDEX_NAME = 'manelast'
+CONFIGURATION_FILE = File.expand_path('~/.elman.yml')
+INDEX_NAME = 'elman'
 APROPOS_REGEX = /(.*)\s\(\d*.*\)\s*-\s*(.*)/
 
 # Creates the configuration file in user's home directory
@@ -121,6 +121,8 @@ def display_manpage_for_selection(selection)
   IO.popen('less', 'w') do |f|
     f.puts @results[selection][:manpage]
   end
+
+  prompt_for_selection
 end
 
 def truncate(str)
@@ -172,12 +174,12 @@ load_configuration
 
 # Use option parser to display info
 OptionParser.new do |opts|
-  opts.banner = "Usage: manelast [options] query"
+  opts.banner = "Usage: elman [options] query"
 
   opts.separator ""
   opts.separator "Specific options:"
 
-  opts.on('-s', '--setup', 'Setup manelast - (re)creates the index and loads all man pages') do
+  opts.on('-s', '--setup', 'Setup elman - (re)creates the index and loads all man pages') do
     delete_index
     create_index
     load_manpages
