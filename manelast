@@ -1,0 +1,198 @@
+#!/usr/bin/env ruby
+#
+# MIT License
+#
+# Copyright (c) 2018 Lazarus Lazaridis
+#
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to deal
+# in the Software without restriction, including without limitation the rights
+# to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+# copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+#
+# The above copyright notice and this permission notice shall be included in all
+# copies or substantial portions of the Software.
+#
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+# LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+# OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+# SOFTWARE.
+
+require 'yaml'
+require 'fileutils'
+require 'elasticsearch'
+require 'optparse'
+
+CONFIGURATION_FILE = File.expand_path('~/.manelast.yml')
+INDEX_NAME = 'manelast'
+APROPOS_REGEX = /(.*)\s\(\d*.*\)\s*-\s*(.*)/
+
+# Creates the configuration file in user's home directory
+def create_default_configuration_file
+  puts 'Creating the default configuration'
+  FileUtils.touch(CONFIGURATION_FILE)
+
+  configuration = YAML::load_file(CONFIGURATION_FILE) || {}
+  configuration[:elasticsearch] = { host: 'localhost',
+                                    port: '9200',
+                                    search_results_size: 10 }
+
+  File.write(CONFIGURATION_FILE, configuration.to_yaml)
+end
+
+# Deletes the index
+def delete_index
+  client.indices.delete index: INDEX_NAME rescue false
+end
+
+# Creates the index
+def create_index
+  return if client.indices.exists? index: INDEX_NAME
+
+  puts "Creating index: #{INDEX_NAME}"
+  client.indices.create  index: INDEX_NAME,
+                         body: {
+                           mappings: {
+                             document: {
+                               properties: {
+                                 command: {
+                                   type: :text
+                                 },
+                                 description: {
+                                   type: :text,
+                                   analyzer: :english
+                                 },
+                                 manpage: {
+                                   type: :text,
+                                   analyzer: :english
+                                 }
+                               }
+                             }
+                           }
+                         }
+end
+
+# Loads the man pages
+def load_manpages
+  all_pages = `apropos .`.split "\n"
+  all_pages.each do |line|
+    matches = APROPOS_REGEX.match line
+    command = matches[1]
+    description = matches[2]
+    manpage = `man #{command}`
+
+    client.index index: INDEX_NAME,
+                  type: :document,
+                  body: {
+                    command: command,
+                    description: description,
+                    manpage: manpage
+                  }
+  end
+end
+
+# Searches the index
+def search(term)
+  result = client.search index: INDEX_NAME,
+                         size: @elasticseach_search_results_size,
+                         body: {
+                           query: {
+                             multi_match: {
+                               query: term,
+                               type: :most_fields,
+                               fields: ['command', 'description^3', 'manpage'],
+                               operator: :and,
+                               auto_generate_synonyms_phrase_query: true
+                             }
+                           }
+                         }
+
+  result['hits']['hits'].map{ |hit| { command: hit['_source']['command'],
+                                      description: hit['_source']['description'],
+                                      manpage: hit['_source']['manpage'] } }
+end
+
+# Displays the man page of a selection
+def display_manpage_for_selection(selection)
+  IO.popen('less', 'w') do |f|
+    f.puts @results[selection][:manpage]
+  end
+end
+
+# Displays the current matches and prompts for user selection
+def prompt_for_selection
+  puts @results.map.with_index { |result, index| "#{index}: #{result[:command].ljust(20)} #{result[:description]}" }
+  puts "Select which manpage to display (q to exit):"
+
+  @selected = $stdin.gets.chop
+
+  exit 0 if @selected == 'q'
+
+  begin
+    @selected = Integer(@selected)
+    raise 'invalid command number' if @selected < 0 || @selected > @results.size - 1
+
+    display_manpage_for_selection @selected
+  rescue StandardError => e
+    puts "Invalid selection - #{e.message}"
+    prompt_for_selection
+  end
+end
+
+# Utility method to access the elasticseach client
+def client
+  @client ||= Elasticsearch::Client.new host: @elasticsearch_host,
+                                        port: @elasticsearch_port
+end
+
+def load_configuration
+  configuration = YAML::load_file(CONFIGURATION_FILE)
+  @elasticsearch_host = configuration[:elasticsearch][:host]
+  @elasticsearch_port = configuration[:elasticsearch][:port]
+  @elasticseach_search_results_size = configuration[:elasticsearch][:search_results_size]
+end
+
+# Default to help when no arguments are passed to the script
+ARGV << '-h' if ARGV.empty?
+
+create_default_configuration_file unless File.exists?(CONFIGURATION_FILE)
+load_configuration
+
+# Use option parser to display info
+OptionParser.new do |opts|
+  opts.banner = "Usage: manelast [options] query"
+
+  opts.separator ""
+  opts.separator "Specific options:"
+
+  opts.on('-s', '--setup', 'Setup manelast - (re)creates the index and loads all man pages') do
+    delete_index
+    create_index
+    load_manpages
+    exit 0
+  end
+
+  opts.on_tail('-h', '--help', 'Show this message') do
+    puts opts
+    exit 0
+  end
+end.parse!
+
+@results = search ARGV.join ' '
+
+# No matches
+if @results.size == 0
+  puts 'No commands found matching your query.'
+  exit 0
+end
+
+# Only one match
+if @results.size == 1
+  display_manpage_for_selection 0
+end
+
+prompt_for_selection
