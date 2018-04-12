@@ -103,10 +103,12 @@ def search(term)
                            query: {
                              multi_match: {
                                query: term,
-                               type: :most_fields,
-                               fields: ['command', 'description^3', 'manpage'],
-                               operator: :and,
-                               auto_generate_synonyms_phrase_query: true
+                               type: :cross_fields,
+                               fields: ['command', 'description^3', 'manpage^3'],
+                               operator: :or,
+                               tie_breaker: 0.1,
+                               minimum_should_match: '40%',
+                               cutoff_frequency: 0.1
                              }
                            }
                          }
@@ -117,12 +119,12 @@ def search(term)
 end
 
 # Displays the man page of a selection
-def display_manpage_for_selection(selection)
+def display_manpage_for_selection(selection, query)
   IO.popen('less', 'w') do |f|
     f.puts @results[selection][:manpage]
   end
 
-  prompt_for_selection
+  prompt_for_selection(query)
 end
 
 def truncate(str)
@@ -134,9 +136,16 @@ def truncate(str)
 end
 
 # Displays the current matches and prompts for user selection
-def prompt_for_selection
-  puts @results.map.with_index { |result, index| "#{index}: #{result[:command].ljust(15)} #{truncate(result[:description])}" }
-  puts "Select which manpage to display (q to exit):"
+def prompt_for_selection(query)
+  puts @results.map.with_index { |result, index| "#{index}: #{result[:command].ljust(15)} #{truncate(result[:description])}" } unless query.empty?
+
+  if query.empty?
+    puts "Type a query or q to exit:"
+  elsif @results.size == 0
+    puts "No man pages found matching your query. Type a new query or q to exit:"
+  else
+    puts "Type a number for the corresponding manpage, q to exit or a new query:"
+  end
 
   @selected = $stdin.gets.chop
 
@@ -146,10 +155,13 @@ def prompt_for_selection
     @selected = Integer(@selected)
     raise 'invalid command number' if @selected < 0 || @selected > @results.size - 1
 
-    display_manpage_for_selection @selected
+    display_manpage_for_selection @selected, query
+  rescue ArgumentError => e
+    # New query
+    handle_search @selected
   rescue StandardError => e
     puts "Invalid selection - #{e.message}"
-    prompt_for_selection
+    prompt_for_selection(query)
   end
 end
 
@@ -165,9 +177,6 @@ def load_configuration
   @elasticsearch_port = configuration[:elasticsearch][:port]
   @elasticseach_search_results_size = configuration[:elasticsearch][:search_results_size]
 end
-
-# Default to help when no arguments are passed to the script
-ARGV << '-h' if ARGV.empty?
 
 create_default_configuration_file unless File.exists?(CONFIGURATION_FILE)
 load_configuration
@@ -192,17 +201,11 @@ OptionParser.new do |opts|
   end
 end.parse!
 
-@results = search ARGV.join ' '
+# Searches the given query
+def handle_search(query)
+  @results = search query unless query.empty?
 
-# No matches
-if @results.size == 0
-  puts 'No commands found matching your query.'
-  exit 0
+  prompt_for_selection(query)
 end
 
-# Only one match
-if @results.size == 1
-  display_manpage_for_selection 0
-end
-
-prompt_for_selection
+handle_search ARGV.join ' '
