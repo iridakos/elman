@@ -1,7 +1,7 @@
 # elman
 
 A script for full text searching Linux man pages with Elasticsearch.
-This script has been developed to play around with the idea described in [this post](https://iridakos.com/tutorials/2018/04/12/elasticsearch-linux-man-pages).
+This script has been developed to **play around** with the idea described in [this post](https://iridakos.com/tutorials/2018/04/12/elasticsearch-linux-man-pages).
 
 ![elman demo gif](https://github.com/iridakos/elman/raw/master/resources/elasticsearch-manpages.gif)
 
