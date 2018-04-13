@@ -1,4 +1,4 @@
-# elman
+# elman :penguin:
 
 A script for full text searching Linux man pages with Elasticsearch.
 
